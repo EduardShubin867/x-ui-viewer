@@ -14,7 +14,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "collector:dev": "tsx collector/index.ts",
-    "collector:build": "tsup collector/index.ts --format esm --platform node --out-dir dist/collector --clean",
+    "collector:build": "tsup",
     "collector:start": "node dist/collector/index.mjs",
     "cleanup:events": "tsx scripts/cleanup-events.ts"
   },
