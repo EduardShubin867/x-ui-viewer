@@ -7,16 +7,17 @@ export interface ParseResult {
   recognized: boolean;
 }
 
-const datePrefix = /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\s+(.*)$/;
+const datePrefix = /^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?\s+(.*)$/;
 const sourcePattern = /\bfrom\s+(\[[^\]]+\]:\d+|\S+)/i;
 const destinationPattern = /\baccepted\s+(tcp|udp):(.+?)\s+\[/i;
-const tagsPattern = /\[\s*([^\]]*?)\s*>>\s*([^\]]*?)\s*\]/;
+const tagsPattern = /\[\s*([^\]]*?)\s*(?:>>|->)\s*([^\]]*?)\s*\]/;
 const emailPattern = /\bemail:\s*(.*?)(?=\s*,\s*Domain:|$)/i;
 const domainPattern = /(?:^|,)\s*Domain:\s*([^,]+?)(?=\s*,|$)/i;
 
 function parseTimestamp(match: RegExpMatchArray): Date {
-  const [, year, month, day, hour, minute, second] = match;
-  return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+  const [, year, month, day, hour, minute, second, fraction] = match;
+  const milliseconds = Number((fraction ?? "").padEnd(3, "0").slice(0, 3));
+  return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), milliseconds);
 }
 
 export function parseHostPort(value: string): { host: string; port: number | null } {

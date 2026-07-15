@@ -26,6 +26,18 @@ describe("Xray access log parser", () => {
     expect(result.event).toMatchObject({ network: "udp", clientEmail: null, destinationIp: "8.8.8.8", inboundTag: "dns inbound", outboundTag: "dns-out" });
   });
 
+  it("parses the current 3x-ui timestamp and arrow format", () => {
+    const result = parse("2026/07/15 16:20:35.263536 from 1.2.3.4:52133 accepted tcp:discord.com:443 [in-443-udp -> direct] email: phone");
+    expect(result.recognized).toBe(true);
+    expect(result.event).toMatchObject({
+      clientEmail: "phone",
+      destinationHost: "discord.com",
+      inboundTag: "in-443-udp",
+      outboundTag: "direct",
+    });
+    expect(result.event?.occurredAt).toContain(".263Z");
+  });
+
   it("tolerates extra spaces, nonstandard tags and commas", () => {
     const result = parse("2026/07/15 21:13:04   from 1.2.3.4:55 accepted tcp:example.com:80 [ custom, in   >>   proxy, eu ] email: user, one, Domain: example.com");
     expect(result.event).toMatchObject({ inboundTag: "custom, in", outboundTag: "proxy, eu", clientEmail: "user, one", detectedDomain: "example.com" });
