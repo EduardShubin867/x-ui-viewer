@@ -96,7 +96,7 @@ export class PrismaAccessEventRepository {
     const search = filters.search;
     const where: Prisma.AccessEventWhereInput = {
       node: filters.nodeId ? { slug: filters.nodeId } : undefined,
-      clientEmail: filters.clientEmail,
+      clientEmail: filters.clientEmails.length ? { in: filters.clientEmails } : undefined,
       network: filters.network,
       inboundTag: filters.inboundTag,
       outboundTag: filters.outboundTag,

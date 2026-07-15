@@ -10,15 +10,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { IpIntelligenceCard, IpOwner } from "@/components/events/ip-intelligence";
+import { MultiSelect } from "@/components/ui/multi-select";
 
 interface NodeItem { id: string; name: string; slug: string; lastSyncAt: string | null; syncError: string | null }
 interface ClientItem { email: string; nodeId: string; nodeName: string; inboundTag: string | null }
 interface Stats { total: number; topDomains: { label: string; value: number }[]; topClients: { label: string; value: number }[]; topOutbounds: { label: string; value: number }[]; perMinute: { label: string; value: number }[]; unknownDomain: number; uniqueDestinations: number }
 const json = async <T,>(url: string): Promise<T> => { const response = await fetch(url); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<T>; };
 
-function matches(event: XrayAccessEvent, filters: Record<string, string>): boolean {
+function matches(event: XrayAccessEvent, filters: Record<string, string>, clientEmails: readonly string[]): boolean {
   const haystack = [event.clientEmail, event.destinationHost, event.destinationIp, event.detectedDomain, event.inboundTag, event.outboundTag].filter(Boolean).join(" ").toLowerCase();
-  return (!filters.nodeId || event.nodeId === filters.nodeId) && (!filters.clientEmail || event.clientEmail === filters.clientEmail) && (!filters.network || event.network === filters.network) && (!filters.inboundTag || event.inboundTag === filters.inboundTag) && (!filters.outboundTag || event.outboundTag === filters.outboundTag) && (!filters.search || haystack.includes(filters.search.toLowerCase()));
+  return (!filters.nodeId || event.nodeId === filters.nodeId) && (!clientEmails.length || Boolean(event.clientEmail && clientEmails.includes(event.clientEmail))) && (!filters.network || event.network === filters.network) && (!filters.inboundTag || event.inboundTag === filters.inboundTag) && (!filters.outboundTag || event.outboundTag === filters.outboundTag) && (!filters.search || haystack.includes(filters.search.toLowerCase()));
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
@@ -28,28 +29,34 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 
 export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEmail: string; from: string } }) {
   const queryClient = useQueryClient();
-  const [filters, setFilters] = useState<Record<string, string>>({ nodeId: fixed?.nodeId ?? "", clientEmail: fixed?.clientEmail ?? "", network: "", inboundTag: "", outboundTag: "", search: "", from: fixed?.from ?? "", period: "" });
+  const [filters, setFilters] = useState<Record<string, string>>({ nodeId: fixed?.nodeId ?? "", network: "", inboundTag: "", outboundTag: "", search: "", from: fixed?.from ?? "", period: "" });
+  const [clientEmails, setClientEmails] = useState<string[]>(fixed?.clientEmail ? [fixed.clientEmail] : []);
   const [live, setLive] = useState(true);
   const [connected, setConnected] = useState(false);
   const [rowLimit, setRowLimit] = useState("250");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<XrayAccessEvent[]>([]);
   const filterRef = useRef(filters);
+  const clientEmailsRef = useRef(clientEmails);
   const liveRef = useRef(live);
   useEffect(() => { filterRef.current = filters; }, [filters]);
+  useEffect(() => { clientEmailsRef.current = clientEmails; }, [clientEmails]);
   useEffect(() => { liveRef.current = live; }, [live]);
 
   const params = useMemo(() => {
     const search = new URLSearchParams({ limit: rowLimit });
     for (const [key, value] of Object.entries(filters)) if (value && key !== "period") search.set(key, value);
+    for (const email of clientEmails) search.append("clientEmail", email);
     return search.toString();
-  }, [filters, rowLimit]);
+  }, [clientEmails, filters, rowLimit]);
+  const paramsRef = useRef(params);
+  useEffect(() => { paramsRef.current = params; }, [params]);
   const eventsQuery = useQuery({ queryKey: ["events", params], queryFn: () => json<EventsPage>(`/api/events?${params}`) });
   const nodesQuery = useQuery({ queryKey: ["nodes"], queryFn: () => json<{ items: NodeItem[] }>("/api/nodes") });
   const clientsQuery = useQuery({ queryKey: ["clients", filters.nodeId], queryFn: () => json<{ items: ClientItem[] }>(`/api/clients${filters.nodeId ? `?nodeId=${encodeURIComponent(filters.nodeId)}` : ""}`) });
   const statsParams = new URLSearchParams({ minutes: filters.period || "60" });
   if (filters.nodeId) statsParams.set("nodeId", filters.nodeId);
-  if (filters.clientEmail) statsParams.set("clientEmail", filters.clientEmail);
+  for (const email of clientEmails) statsParams.append("clientEmail", email);
   const statsQuery = useQuery({ queryKey: ["stats", statsParams.toString()], queryFn: () => json<Stats>(`/api/stats?${statsParams}`), enabled: !fixed, refetchInterval: live ? 15_000 : false });
 
   useEffect(() => {
@@ -57,21 +64,33 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
     source.addEventListener("ready", () => { setConnected(true); void queryClient.invalidateQueries({ queryKey: ["events"] }); });
     source.addEventListener("access-event", (message) => {
       const event = JSON.parse((message as MessageEvent<string>).data) as XrayAccessEvent;
-      if (!matches(event, filterRef.current)) return;
+      if (!matches(event, filterRef.current, clientEmailsRef.current)) return;
       if (!liveRef.current) { setPending((current) => [...current.slice(-499), event]); return; }
-      queryClient.setQueriesData<EventsPage>({ queryKey: ["events"] }, (current) => current ? { ...current, items: [{ ...event, id: `live-${event.eventId}`, nodeName: event.nodeId }, ...current.items.filter((item) => item.eventId !== event.eventId)].slice(0, Number(rowLimit)) } : current);
+      queryClient.setQueryData<EventsPage>(["events", paramsRef.current], (current) => current ? { ...current, items: [{ ...event, id: `live-${event.eventId}`, nodeName: event.nodeId }, ...current.items.filter((item) => item.eventId !== event.eventId)].slice(0, Number(rowLimit)) } : current);
     });
     source.addEventListener("resync-required", () => void queryClient.invalidateQueries({ queryKey: ["events"] }));
     source.onerror = () => setConnected(false);
     return () => source.close();
   }, [queryClient, rowLimit]);
 
-  const update = (key: string) => (value: string) => setFilters((current) => ({ ...current, [key]: value, ...(key === "nodeId" ? { clientEmail: "" } : {}) }));
+  const update = (key: string) => (value: string) => {
+    if (key === "nodeId") { setClientEmails([]); setPending([]); }
+    setFilters((current) => ({ ...current, [key]: value }));
+  };
   const updatePeriod = (value: string) => setFilters((current) => ({ ...current, period: value, from: value ? new Date(Date.now() - Number(value) * 60_000).toISOString() : "" }));
   const events = eventsQuery.data?.items ?? [];
+  const clientOptions = useMemo(() => {
+    const clients = new Map<string, Set<string>>();
+    for (const client of clientsQuery.data?.items ?? []) {
+      const nodes = clients.get(client.email) ?? new Set<string>();
+      nodes.add(client.nodeName);
+      clients.set(client.email, nodes);
+    }
+    return [...clients].map(([email, nodes]) => ({ value: email, label: email, description: filters.nodeId ? undefined : [...nodes].join(" · ") }));
+  }, [clientsQuery.data?.items, filters.nodeId]);
   const inbounds = [...new Set(events.map((event) => event.inboundTag).filter((value): value is string => Boolean(value)))];
   const outbounds = [...new Set(events.map((event) => event.outboundTag).filter((value): value is string => Boolean(value)))];
-  const clear = () => setFilters({ nodeId: fixed?.nodeId ?? "", clientEmail: fixed?.clientEmail ?? "", from: fixed?.from ?? "", period: "", network: "", inboundTag: "", outboundTag: "", search: "" });
+  const clear = () => { setClientEmails(fixed?.clientEmail ? [fixed.clientEmail] : []); setPending([]); setFilters({ nodeId: fixed?.nodeId ?? "", from: fixed?.from ?? "", period: "", network: "", inboundTag: "", outboundTag: "", search: "" }); };
   const resume = () => {
     setLive(true);
     if (pending.length) { setPending([]); void queryClient.invalidateQueries({ queryKey: ["events"] }); }
@@ -93,7 +112,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
     <div className="rounded-lg border border-slate-800 bg-slate-900/45 p-3 shadow-[0_18px_60px_rgba(0,0,0,0.16)]">
       <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(150px,1fr)_minmax(160px,1fr)_120px_minmax(135px,1fr)_minmax(135px,1fr)_130px_minmax(220px,1.4fr)_36px_auto]">
         <Select value={filters.nodeId} onValueChange={update("nodeId")} placeholder="Все серверы" disabled={Boolean(fixed)} options={(nodesQuery.data?.items ?? []).map((node) => ({ value: node.slug, label: node.name }))} />
-        <Select value={filters.clientEmail} onValueChange={update("clientEmail")} placeholder="Все клиенты" disabled={Boolean(fixed)} options={(clientsQuery.data?.items ?? []).map((client) => ({ value: client.email, label: client.email }))} />
+        <MultiSelect value={clientEmails} onValueChange={(value) => { setClientEmails(value); setPending([]); }} placeholder="Все клиенты" disabled={Boolean(fixed)} loading={clientsQuery.isLoading} options={clientOptions} />
         <Select value={filters.network} onValueChange={update("network")} placeholder="TCP / UDP" options={[{ value: "tcp", label: "TCP" }, { value: "udp", label: "UDP" }]} />
         <Select value={filters.inboundTag} onValueChange={update("inboundTag")} placeholder="Inbound" options={inbounds.map((value) => ({ value, label: value }))} />
         <Select value={filters.outboundTag} onValueChange={update("outboundTag")} placeholder="Outbound" options={outbounds.map((value) => ({ value, label: value }))} />

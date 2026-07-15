@@ -1,13 +1,13 @@
 import "server-only";
 import { db } from "@/lib/server/db";
 
-export async function getEventStats(filters: { nodeId?: string; clientEmail?: string; minutes: number }) {
+export async function getEventStats(filters: { nodeId?: string; clientEmails: string[]; minutes: number }) {
   const from = new Date(Date.now() - filters.minutes * 60_000);
   const events = await db.accessEvent.findMany({
     where: {
       occurredAt: { gte: from },
       node: filters.nodeId ? { slug: filters.nodeId } : undefined,
-      clientEmail: filters.clientEmail,
+      clientEmail: filters.clientEmails.length ? { in: filters.clientEmails } : undefined,
     },
     select: { occurredAt: true, clientEmail: true, sourceIp: true, detectedDomain: true, destinationHost: true, destinationIp: true, outboundTag: true, network: true },
     orderBy: { occurredAt: "desc" },
