@@ -25,5 +25,6 @@ export interface TrafficView {
   uplinkRateBps: string;
   downlinkRateBps: string;
   online: boolean | null;
+  onlineSource: "xray" | "activity";
   stale: boolean;
 }
