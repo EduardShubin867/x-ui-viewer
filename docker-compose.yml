@@ -1,0 +1,72 @@
+name: xray-scope
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xray_scope}
+      POSTGRES_USER: ${POSTGRES_USER:-xray}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["sh", "-c", "pnpm prisma:migrate && pnpm start"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-xray}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-xray_scope}
+      PANEL_USERNAME: ${PANEL_USERNAME:?set PANEL_USERNAME in .env}
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?set PANEL_PASSWORD in .env}
+      COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:?set COLLECTOR_TOKEN in .env}
+      EVENT_RETENTION_HOURS: ${EVENT_RETENTION_HOURS:-72}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  collector:
+    build:
+      context: .
+      dockerfile: collector/Dockerfile
+    restart: unless-stopped
+    environment:
+      XRAY_ACCESS_LOG_PATH: ${XRAY_ACCESS_LOG_PATH:-/var/log/xray/access.log}
+      NODE_ID: ${NODE_ID:?set NODE_ID in .env}
+      WEB_API_URL: http://web:3000
+      COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:?set COLLECTOR_TOKEN in .env}
+      COLLECTOR_BATCH_SIZE: ${COLLECTOR_BATCH_SIZE:-100}
+      COLLECTOR_FLUSH_INTERVAL_MS: ${COLLECTOR_FLUSH_INTERVAL_MS:-1000}
+      COLLECTOR_STATE_PATH: /data/collector-state.json
+      COLLECTOR_MAX_QUEUE_SIZE: ${COLLECTOR_MAX_QUEUE_SIZE:-10000}
+    volumes:
+      - ${XRAY_LOG_DIR:?set XRAY_LOG_DIR in .env}:/var/log/xray:ro
+      - collector-data:/data
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/data/collector-state.json"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
+  collector-data:

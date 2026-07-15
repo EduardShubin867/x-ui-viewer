@@ -1,0 +1,66 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Node {
+  id            String       @id @default(cuid())
+  name          String
+  slug          String       @unique
+  panelUrl      String?
+  panelBasePath String?
+  apiToken      String?
+  isEnabled     Boolean      @default(true)
+  lastSyncAt    DateTime?
+  syncError     String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  events        AccessEvent[]
+  clients       XrayClient[]
+}
+
+model XrayClient {
+  id         String   @id @default(cuid())
+  nodeId     String
+  email      String
+  inboundId  String?
+  inboundTag String?
+  enabled    Boolean  @default(true)
+  metadata   Json?
+  lastSeenAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  node       Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, email])
+  @@index([email])
+}
+
+model AccessEvent {
+  id              BigInt   @id @default(autoincrement())
+  eventId         String   @unique
+  occurredAt      DateTime
+  nodeId          String
+  clientEmail     String?
+  sourceIp        String?
+  network         String
+  destinationHost String?
+  destinationIp   String?
+  destinationPort Int?
+  detectedDomain  String?
+  inboundTag      String?
+  outboundTag     String?
+  rawLine         String?
+  createdAt       DateTime @default(now())
+  node             Node    @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([occurredAt])
+  @@index([nodeId, occurredAt])
+  @@index([clientEmail, occurredAt])
+  @@index([destinationHost, occurredAt])
+  @@index([detectedDomain, occurredAt])
+}
