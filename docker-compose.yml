@@ -30,7 +30,7 @@ services:
       EVENT_RETENTION_HOURS: ${EVENT_RETENTION_HOURS:-72}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
-      - "3000:3000"
+      - "18329:3000"
     depends_on:
       postgres:
         condition: service_healthy
