@@ -1,6 +1,6 @@
 "use client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Clipboard, Copy, Pause, Play, Radio, RefreshCcw, Search, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Clipboard, Copy, Eye, EyeOff, Pause, Play, Radio, RefreshCcw, Search, X } from "lucide-react";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { EventsPage, XrayAccessEvent } from "@/lib/domain/access-event";
@@ -17,9 +17,9 @@ interface ClientItem { email: string; nodeId: string; nodeName: string; inboundT
 interface Stats { total: number; topDomains: { label: string; value: number }[]; topClients: { label: string; value: number }[]; topOutbounds: { label: string; value: number }[]; perMinute: { label: string; value: number }[]; unknownDomain: number; uniqueDestinations: number }
 const json = async <T,>(url: string): Promise<T> => { const response = await fetch(url); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json() as Promise<T>; };
 
-function matches(event: XrayAccessEvent, filters: Record<string, string>, clientEmails: readonly string[]): boolean {
+function matches(event: XrayAccessEvent, filters: Record<string, string>, clientEmails: readonly string[], includeLoopback: boolean): boolean {
   const haystack = [event.clientEmail, event.destinationHost, event.destinationIp, event.detectedDomain, event.inboundTag, event.outboundTag].filter(Boolean).join(" ").toLowerCase();
-  return (!filters.nodeId || event.nodeId === filters.nodeId) && (!clientEmails.length || Boolean(event.clientEmail && clientEmails.includes(event.clientEmail))) && (!filters.network || event.network === filters.network) && (!filters.inboundTag || event.inboundTag === filters.inboundTag) && (!filters.outboundTag || event.outboundTag === filters.outboundTag) && (!filters.search || haystack.includes(filters.search.toLowerCase()));
+  return (includeLoopback || event.destinationIp !== "127.0.0.1") && (!filters.nodeId || event.nodeId === filters.nodeId) && (!clientEmails.length || Boolean(event.clientEmail && clientEmails.includes(event.clientEmail))) && (!filters.network || event.network === filters.network) && (!filters.inboundTag || event.inboundTag === filters.inboundTag) && (!filters.outboundTag || event.outboundTag === filters.outboundTag) && (!filters.search || haystack.includes(filters.search.toLowerCase()));
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
@@ -31,6 +31,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<Record<string, string>>({ nodeId: fixed?.nodeId ?? "", network: "", inboundTag: "", outboundTag: "", search: "", from: fixed?.from ?? "", period: "" });
   const [clientEmails, setClientEmails] = useState<string[]>(fixed?.clientEmail ? [fixed.clientEmail] : []);
+  const [includeLoopback, setIncludeLoopback] = useState(false);
   const [live, setLive] = useState(true);
   const [connected, setConnected] = useState(false);
   const [rowLimit, setRowLimit] = useState("250");
@@ -38,17 +39,20 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
   const [pending, setPending] = useState<XrayAccessEvent[]>([]);
   const filterRef = useRef(filters);
   const clientEmailsRef = useRef(clientEmails);
+  const includeLoopbackRef = useRef(includeLoopback);
   const liveRef = useRef(live);
   useEffect(() => { filterRef.current = filters; }, [filters]);
   useEffect(() => { clientEmailsRef.current = clientEmails; }, [clientEmails]);
+  useEffect(() => { includeLoopbackRef.current = includeLoopback; }, [includeLoopback]);
   useEffect(() => { liveRef.current = live; }, [live]);
 
   const params = useMemo(() => {
     const search = new URLSearchParams({ limit: rowLimit });
     for (const [key, value] of Object.entries(filters)) if (value && key !== "period") search.set(key, value);
     for (const email of clientEmails) search.append("clientEmail", email);
+    if (includeLoopback) search.set("includeLoopback", "true");
     return search.toString();
-  }, [clientEmails, filters, rowLimit]);
+  }, [clientEmails, filters, includeLoopback, rowLimit]);
   const paramsRef = useRef(params);
   useEffect(() => { paramsRef.current = params; }, [params]);
   const eventsQuery = useQuery({ queryKey: ["events", params], queryFn: () => json<EventsPage>(`/api/events?${params}`) });
@@ -57,6 +61,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
   const statsParams = new URLSearchParams({ minutes: filters.period || "60" });
   if (filters.nodeId) statsParams.set("nodeId", filters.nodeId);
   for (const email of clientEmails) statsParams.append("clientEmail", email);
+  if (includeLoopback) statsParams.set("includeLoopback", "true");
   const statsQuery = useQuery({ queryKey: ["stats", statsParams.toString()], queryFn: () => json<Stats>(`/api/stats?${statsParams}`), enabled: !fixed, refetchInterval: live ? 15_000 : false });
 
   useEffect(() => {
@@ -64,7 +69,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
     source.addEventListener("ready", () => { setConnected(true); void queryClient.invalidateQueries({ queryKey: ["events"] }); });
     source.addEventListener("access-event", (message) => {
       const event = JSON.parse((message as MessageEvent<string>).data) as XrayAccessEvent;
-      if (!matches(event, filterRef.current, clientEmailsRef.current)) return;
+      if (!matches(event, filterRef.current, clientEmailsRef.current, includeLoopbackRef.current)) return;
       if (!liveRef.current) { setPending((current) => [...current.slice(-499), event]); return; }
       queryClient.setQueryData<EventsPage>(["events", paramsRef.current], (current) => current ? { ...current, items: [{ ...event, id: `live-${event.eventId}`, nodeName: event.nodeId }, ...current.items.filter((item) => item.eventId !== event.eventId)].slice(0, Number(rowLimit)) } : current);
     });
@@ -90,7 +95,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
   }, [clientsQuery.data?.items, filters.nodeId]);
   const inbounds = [...new Set(events.map((event) => event.inboundTag).filter((value): value is string => Boolean(value)))];
   const outbounds = [...new Set(events.map((event) => event.outboundTag).filter((value): value is string => Boolean(value)))];
-  const clear = () => { setClientEmails(fixed?.clientEmail ? [fixed.clientEmail] : []); setPending([]); setFilters({ nodeId: fixed?.nodeId ?? "", from: fixed?.from ?? "", period: "", network: "", inboundTag: "", outboundTag: "", search: "" }); };
+  const clear = () => { setClientEmails(fixed?.clientEmail ? [fixed.clientEmail] : []); setIncludeLoopback(false); setPending([]); setFilters({ nodeId: fixed?.nodeId ?? "", from: fixed?.from ?? "", period: "", network: "", inboundTag: "", outboundTag: "", search: "" }); };
   const resume = () => {
     setLive(true);
     if (pending.length) { setPending([]); void queryClient.invalidateQueries({ queryKey: ["events"] }); }
@@ -122,7 +127,7 @@ export function EventsDashboard({ fixed }: { fixed?: { nodeId: string; clientEma
         {live ? <Button variant="secondary" onClick={() => setLive(false)}><Pause className="size-3.5" />Пауза</Button> : <Button onClick={resume}><Play className="size-3.5" />Продолжить {pending.length ? `+${pending.length}` : ""}</Button>}
       </div>
       <div className="mt-3 flex items-center justify-between border-t border-slate-800 pt-3 text-xs">
-        <span className="flex items-center gap-2 text-slate-500"><Radio className={`size-3.5 ${connected && live ? "text-emerald-300" : "text-amber-300"}`} /><span className={connected && live ? "text-emerald-300" : "text-amber-300"}>{connected ? (live ? "LIVE · автообновление включено" : "LIVE · отображение приостановлено") : "Переподключение…"}</span>{filters.nodeId && <span className="ml-3 border-l border-slate-800 pl-3">{nodesQuery.data?.items.find((node) => node.slug === filters.nodeId)?.syncError ? <span className="text-rose-300">sync error: {nodesQuery.data.items.find((node) => node.slug === filters.nodeId)?.syncError}</span> : <span>sync: {nodesQuery.data?.items.find((node) => node.slug === filters.nodeId)?.lastSyncAt ? new Date(nodesQuery.data.items.find((node) => node.slug === filters.nodeId)!.lastSyncAt!).toLocaleString("ru-RU") : "ещё не выполнялся"}</span>}</span>}</span>
+        <span className="flex items-center gap-2 text-slate-500"><Radio className={`size-3.5 ${connected && live ? "text-emerald-300" : "text-amber-300"}`} /><span className={connected && live ? "text-emerald-300" : "text-amber-300"}>{connected ? (live ? "LIVE · автообновление включено" : "LIVE · отображение приостановлено") : "Переподключение…"}</span><Button variant="ghost" size="sm" aria-pressed={includeLoopback} title={includeLoopback ? "Скрыть подключения к 127.0.0.1" : "Показать подключения к 127.0.0.1"} onClick={() => { setIncludeLoopback((current) => !current); setPending([]); }} className={includeLoopback ? "ml-2 text-cyan-300" : "ml-2 text-slate-500"}>{includeLoopback ? <Eye className="size-3" /> : <EyeOff className="size-3" />}127.0.0.1</Button>{filters.nodeId && <span className="ml-3 border-l border-slate-800 pl-3">{nodesQuery.data?.items.find((node) => node.slug === filters.nodeId)?.syncError ? <span className="text-rose-300">sync error: {nodesQuery.data.items.find((node) => node.slug === filters.nodeId)?.syncError}</span> : <span>sync: {nodesQuery.data?.items.find((node) => node.slug === filters.nodeId)?.lastSyncAt ? new Date(nodesQuery.data.items.find((node) => node.slug === filters.nodeId)!.lastSyncAt!).toLocaleString("ru-RU") : "ещё не выполнялся"}</span>}</span>}</span>
         <Button variant="ghost" size="sm" onClick={() => void eventsQuery.refetch()}><RefreshCcw className={`size-3 ${eventsQuery.isFetching ? "animate-spin" : ""}`} />Обновить</Button>
       </div>
     </div>

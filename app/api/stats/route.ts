@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 const schema = z.object({
   nodeId: z.string().max(128).optional(),
   clientEmails: z.array(z.string().trim().min(1).max(320)).max(100).default([]),
+  includeLoopback: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   minutes: z.coerce.number().int().min(1).max(10_080).default(60),
 });
 

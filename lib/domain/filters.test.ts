@@ -25,4 +25,15 @@ describe("event URL filters", () => {
       filtersFromUrl(new URL("http://localhost/api/events")).clientEmails,
     ).toEqual([]);
   });
+
+  it("hides loopback destinations by default and can include them explicitly", () => {
+    expect(
+      filtersFromUrl(new URL("http://localhost/api/events")).includeLoopback,
+    ).toBe(false);
+    expect(
+      filtersFromUrl(
+        new URL("http://localhost/api/events?includeLoopback=true"),
+      ).includeLoopback,
+    ).toBe(true);
+  });
 });

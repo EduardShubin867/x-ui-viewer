@@ -6,6 +6,7 @@ const optionalText = z.string().trim().max(512).optional().transform((value) => 
 export const eventFiltersSchema = z.object({
   nodeId: optionalText,
   clientEmails: z.array(z.string().trim().min(1).max(320)).max(100).default([]),
+  includeLoopback: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   search: optionalText,
   network: networkSchema.optional(),
   inboundTag: optionalText,

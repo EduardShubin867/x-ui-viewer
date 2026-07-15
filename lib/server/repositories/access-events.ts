@@ -100,18 +100,21 @@ export class PrismaAccessEventRepository {
       network: filters.network,
       inboundTag: filters.inboundTag,
       outboundTag: filters.outboundTag,
+      AND: [
+        filters.includeLoopback ? {} : { OR: [{ destinationIp: null }, { destinationIp: { not: "127.0.0.1" } }] },
+        search ? { OR: [
+          { clientEmail: { contains: search, mode: "insensitive" } },
+          { destinationHost: { contains: search, mode: "insensitive" } },
+          { destinationIp: { contains: search, mode: "insensitive" } },
+          { detectedDomain: { contains: search, mode: "insensitive" } },
+          { inboundTag: { contains: search, mode: "insensitive" } },
+          { outboundTag: { contains: search, mode: "insensitive" } },
+        ] } : {},
+      ],
       occurredAt: filters.from || filters.to ? {
         gte: filters.from ? new Date(filters.from) : undefined,
         lte: filters.to ? new Date(filters.to) : undefined,
       } : undefined,
-      OR: search ? [
-        { clientEmail: { contains: search, mode: "insensitive" } },
-        { destinationHost: { contains: search, mode: "insensitive" } },
-        { destinationIp: { contains: search, mode: "insensitive" } },
-        { detectedDomain: { contains: search, mode: "insensitive" } },
-        { inboundTag: { contains: search, mode: "insensitive" } },
-        { outboundTag: { contains: search, mode: "insensitive" } },
-      ] : undefined,
     };
     const rows = await db.accessEvent.findMany({
       where,
