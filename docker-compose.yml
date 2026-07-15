@@ -29,6 +29,11 @@ services:
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:?set COLLECTOR_TOKEN in .env}
       EVENT_RETENTION_HOURS: ${EVENT_RETENTION_HOURS:-72}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL:-https://books.synapse-web.ru/}
+      OPENROUTER_APP_NAME: ${OPENROUTER_APP_NAME:-Xray Scope}
     ports:
       - "18329:3000"
     depends_on:
@@ -55,6 +60,8 @@ services:
       COLLECTOR_FLUSH_INTERVAL_MS: ${COLLECTOR_FLUSH_INTERVAL_MS:-1000}
       COLLECTOR_STATE_PATH: /data/collector-state.json
       COLLECTOR_MAX_QUEUE_SIZE: ${COLLECTOR_MAX_QUEUE_SIZE:-10000}
+      XRAY_METRICS_URL: ${XRAY_METRICS_URL:-}
+      XRAY_METRICS_INTERVAL_MS: ${XRAY_METRICS_INTERVAL_MS:-15000}
     volumes:
       - ${XRAY_LOG_DIR:?set XRAY_LOG_DIR in .env}:/var/log/xray:ro
       - collector-data:/data

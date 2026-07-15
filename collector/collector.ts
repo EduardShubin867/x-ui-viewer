@@ -1,6 +1,7 @@
 import { open, stat, type FileHandle } from "node:fs/promises";
 import type { CollectorConfig } from "./config";
 import { parseXrayAccessLine } from "./parser";
+import { parseXrayMetrics } from "./metrics";
 import { loadState, saveState, type CollectorState } from "./state";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,6 +14,8 @@ export class XrayLogCollector {
   private stopping = false;
   private backoffMs = 1_000;
   private lastFlushAt = 0;
+  private lastMetricsAt = 0;
+  private metricsBackoffMs = 1_000;
 
   constructor(private readonly config: CollectorConfig) {}
 
@@ -26,6 +29,7 @@ export class XrayLogCollector {
       try { await this.readAvailable(); }
       catch (error) { log("warn", "access log unavailable", { error: error instanceof Error ? error.message : String(error) }); }
       await this.flushIfDue();
+      await this.pollMetricsIfDue();
       await sleep(250);
     }
     await this.readAvailable().catch(() => undefined);
@@ -118,6 +122,30 @@ export class XrayLogCollector {
       log("warn", "event delivery failed", { error: error instanceof Error ? error.message : String(error), retryInMs: this.backoffMs });
       this.lastFlushAt = Date.now();
       this.backoffMs = Math.min(this.backoffMs * 2, 60_000);
+    }
+  }
+
+  private async pollMetricsIfDue(): Promise<void> {
+    if (!this.config.XRAY_METRICS_URL) return;
+    const dueIn = Math.max(this.config.XRAY_METRICS_INTERVAL_MS, this.metricsBackoffMs);
+    if (Date.now() - this.lastMetricsAt < dueIn) return;
+    this.lastMetricsAt = Date.now();
+    try {
+      const metricsResponse = await fetch(this.config.XRAY_METRICS_URL, { signal: AbortSignal.timeout(10_000) });
+      if (!metricsResponse.ok) throw new Error(`Xray metrics returned ${metricsResponse.status}`);
+      const snapshot = parseXrayMetrics(await metricsResponse.json(), this.config.NODE_ID);
+      const response = await fetch(`${this.config.WEB_API_URL.replace(/\/$/, "")}/api/collector/metrics`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.config.COLLECTOR_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`web metrics API returned ${response.status}`);
+      this.metricsBackoffMs = 1_000;
+      log("debug", "metrics delivered", { users: snapshot.users.length });
+    } catch (error) {
+      log("warn", "metrics delivery failed", { error: error instanceof Error ? error.message : String(error), retryInMs: this.metricsBackoffMs });
+      this.metricsBackoffMs = Math.min(this.metricsBackoffMs * 2, 60_000);
     }
   }
 

@@ -9,6 +9,8 @@ const configSchema = z.object({
   COLLECTOR_FLUSH_INTERVAL_MS: z.coerce.number().int().min(100).default(1000),
   COLLECTOR_STATE_PATH: z.string().min(1).default("/data/collector-state.json"),
   COLLECTOR_MAX_QUEUE_SIZE: z.coerce.number().int().min(500).default(10_000),
+  XRAY_METRICS_URL: z.url().optional(),
+  XRAY_METRICS_INTERVAL_MS: z.coerce.number().int().min(5_000).default(15_000),
 });
 
 export type CollectorConfig = z.infer<typeof configSchema>;

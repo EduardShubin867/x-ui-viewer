@@ -21,6 +21,26 @@ model Node {
   updatedAt     DateTime     @updatedAt
   events        AccessEvent[]
   clients       XrayClient[]
+  traffic       ClientTraffic[]
+}
+
+model ClientTraffic {
+  id              String   @id @default(cuid())
+  nodeId          String
+  email           String
+  observedAt      DateTime
+  uplinkBytes     BigInt   @default(0)
+  downlinkBytes   BigInt   @default(0)
+  uplinkRateBps   BigInt   @default(0)
+  downlinkRateBps BigInt   @default(0)
+  online          Boolean?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  node            Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([nodeId, email])
+  @@index([email])
+  @@index([observedAt])
 }
 
 model XrayClient {
