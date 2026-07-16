@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventsPage, XrayAccessEvent } from "@/lib/domain/access-event";
+import { groupAccessEvents } from "@/lib/domain/event-groups";
 import type { EventStats } from "@/lib/domain/event-stats";
 import type { TrafficView } from "@/lib/domain/traffic";
 import { formatBitrate } from "@/lib/domain/traffic-format";
@@ -44,6 +45,20 @@ interface ClientItem {
   inboundTag: string | null;
 }
 const PAGE_SIZE = 100;
+
+const rowsLabel = (count: number) => {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const word =
+    mod100 >= 11 && mod100 <= 14
+      ? "строк"
+      : mod10 === 1
+        ? "строка"
+        : mod10 >= 2 && mod10 <= 4
+          ? "строки"
+          : "строк";
+  return `${count} ${word}`;
+};
 const json = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -283,7 +298,14 @@ export function EventsDashboard({
     }
     setFilters((current) => ({ ...current, [key]: value }));
   };
-  const events = eventsQuery.data?.items ?? [];
+  const events = useMemo(
+    () => eventsQuery.data?.items ?? [],
+    [eventsQuery.data?.items],
+  );
+  const visibleRowCount = useMemo(
+    () => (grouped ? groupAccessEvents(events).length : events.length),
+    [events, grouped],
+  );
   const trafficMap = useMemo(
     () =>
       new Map(
@@ -408,7 +430,7 @@ export function EventsDashboard({
           <div className="flex w-full flex-wrap items-center gap-2 text-xs text-slate-500 sm:w-auto">
             <span>Страница {currentPage + 1}</span>
             <span className="text-slate-700">·</span>
-            <span>до {PAGE_SIZE} исходных событий</span>
+            <span>{rowsLabel(visibleRowCount)} в таблице</span>
           </div>
         </div>
       )}
@@ -735,8 +757,10 @@ export function EventsDashboard({
         <p className="text-xs text-slate-500">
           Страница{" "}
           <span className="font-mono text-slate-300">{currentPage + 1}</span>
-          {events.length ? ` · ${events.length} событий` : " · событий нет"}
-          {grouped ? " · повторы группируются внутри страницы" : ""}
+          {` · ${rowsLabel(visibleRowCount)}`}
+          {grouped && events.length
+            ? ` после группировки ${events.length} исходных событий`
+            : ""}
         </p>
         <div className="flex items-center gap-2">
           {currentPage > 0 && newerEvents > 0 && (
