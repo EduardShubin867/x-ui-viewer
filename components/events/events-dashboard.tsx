@@ -1,5 +1,10 @@
 "use client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   CalendarClock,
   ChevronLeft,
@@ -17,7 +22,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventsPage, XrayAccessEvent } from "@/lib/domain/access-event";
-import { groupAccessEvents } from "@/lib/domain/event-groups";
+import { type EventGroup, groupAccessEvents } from "@/lib/domain/event-groups";
 import type { EventStats } from "@/lib/domain/event-stats";
 import type { TrafficView } from "@/lib/domain/traffic";
 import { formatBitrate } from "@/lib/domain/traffic-format";
@@ -45,6 +50,7 @@ interface ClientItem {
   inboundTag: string | null;
 }
 const PAGE_SIZE = 100;
+const RAW_BATCH_SIZE = 500;
 
 const rowsLabel = (count: number) => {
   const mod100 = count % 100;
@@ -125,8 +131,7 @@ export function EventsDashboard({
   const [pagination, setPagination] = useState<{
     key: string;
     index: number;
-    cursors: Array<string | null>;
-  }>({ key: "", index: 0, cursors: [null] });
+  }>({ key: "", index: 0 });
   const filterRef = useRef(filters);
   const clientEmailsRef = useRef(clientEmails);
   const includeLoopbackRef = useRef(includeLoopback);
@@ -171,7 +176,7 @@ export function EventsDashboard({
   }, []);
 
   const baseParams = useMemo(() => {
-    const search = new URLSearchParams({ limit: String(PAGE_SIZE) });
+    const search = new URLSearchParams({ limit: String(RAW_BATCH_SIZE) });
     for (const [key, value] of Object.entries(filters))
       if (value && key !== "period") search.set(key, value);
     for (const email of clientEmails) search.append("clientEmail", email);
@@ -179,28 +184,72 @@ export function EventsDashboard({
     return search.toString();
   }, [clientEmails, filters, includeLoopback]);
   const currentPage = pagination.key === baseParams ? pagination.index : 0;
-  const cursors = useMemo(
-    () => (pagination.key === baseParams ? pagination.cursors : [null]),
-    [baseParams, pagination],
-  );
-  const params = useMemo(() => {
-    const search = new URLSearchParams(baseParams);
-    const cursor = cursors[currentPage];
-    if (cursor) search.set("cursor", cursor);
-    return search.toString();
-  }, [baseParams, currentPage, cursors]);
-  const paramsRef = useRef(params);
+  const paramsRef = useRef(baseParams);
   const currentPageRef = useRef(currentPage);
   useEffect(() => {
-    paramsRef.current = params;
-  }, [params]);
+    paramsRef.current = baseParams;
+  }, [baseParams]);
   useEffect(() => {
     currentPageRef.current = currentPage;
   }, [currentPage]);
-  const eventsQuery = useQuery({
-    queryKey: ["events", params],
-    queryFn: () => json<EventsPage>(`/api/events?${params}`),
+  const eventsQuery = useInfiniteQuery({
+    queryKey: ["events", baseParams],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => {
+      const search = new URLSearchParams(baseParams);
+      if (pageParam) search.set("cursor", pageParam);
+      return json<EventsPage>(`/api/events?${search}`);
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
+  const loadedEvents = useMemo(() => {
+    const unique = new Map<string, EventsPage["items"][number]>();
+    for (const page of eventsQuery.data?.pages ?? [])
+      for (const event of page.items)
+        if (!unique.has(event.eventId)) unique.set(event.eventId, event);
+    return [...unique.values()];
+  }, [eventsQuery.data?.pages]);
+  const rows = useMemo<EventGroup[]>(
+    () =>
+      grouped
+        ? groupAccessEvents(loadedEvents)
+        : loadedEvents.map((event) => ({
+            id: event.eventId,
+            representative: event,
+            events: [event],
+            firstAt: event.occurredAt,
+            lastAt: event.occurredAt,
+          })),
+    [grouped, loadedEvents],
+  );
+  const pageStart = currentPage * PAGE_SIZE;
+  const pageRows = useMemo(
+    () => rows.slice(pageStart, pageStart + PAGE_SIZE),
+    [pageStart, rows],
+  );
+  const events = useMemo(() => {
+    if (!grouped) return pageRows.map((row) => row.representative);
+    const eventIds = new Set(
+      pageRows.flatMap((row) => row.events.map((event) => event.eventId)),
+    );
+    return loadedEvents.filter((event) => eventIds.has(event.eventId));
+  }, [grouped, loadedEvents, pageRows]);
+  const visibleRowCount = pageRows.length;
+  const targetRowCount = (currentPage + 1) * PAGE_SIZE;
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = eventsQuery;
+  const fillingPage = rows.length < targetRowCount && Boolean(hasNextPage);
+  const hasNextRowPage = rows.length > targetRowCount || Boolean(hasNextPage);
+  useEffect(() => {
+    if (rows.length >= targetRowCount || !hasNextPage || isFetchingNextPage)
+      return;
+    void fetchNextPage();
+  }, [
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    rows.length,
+    targetRowCount,
+  ]);
   const nodesQuery = useQuery({
     queryKey: ["nodes"],
     queryFn: () => json<{ items: NodeItem[] }>("/api/nodes"),
@@ -263,22 +312,28 @@ export function EventsDashboard({
         setNewerEvents((current) => current + 1);
         return;
       }
-      queryClient.setQueryData<EventsPage>(
+      queryClient.setQueryData<InfiniteData<EventsPage, string | null>>(
         ["events", paramsRef.current],
         (current) =>
-          current
+          current?.pages[0]
             ? {
                 ...current,
-                items: [
+                pages: [
                   {
-                    ...event,
-                    id: `live-${event.eventId}`,
-                    nodeName: event.nodeId,
+                    ...current.pages[0],
+                    items: [
+                      {
+                        ...event,
+                        id: `live-${event.eventId}`,
+                        nodeName: event.nodeId,
+                      },
+                      ...current.pages[0].items.filter(
+                        (item) => item.eventId !== event.eventId,
+                      ),
+                    ],
                   },
-                  ...current.items.filter(
-                    (item) => item.eventId !== event.eventId,
-                  ),
-                ].slice(0, PAGE_SIZE),
+                  ...current.pages.slice(1),
+                ],
               }
             : current,
       );
@@ -298,14 +353,6 @@ export function EventsDashboard({
     }
     setFilters((current) => ({ ...current, [key]: value }));
   };
-  const events = useMemo(
-    () => eventsQuery.data?.items ?? [],
-    [eventsQuery.data?.items],
-  );
-  const visibleRowCount = useMemo(
-    () => (grouped ? groupAccessEvents(events).length : events.length),
-    [events, grouped],
-  );
   const trafficMap = useMemo(
     () =>
       new Map(
@@ -723,6 +770,8 @@ export function EventsDashboard({
             size="sm"
             aria-pressed={grouped}
             onClick={() => {
+              setPagination({ key: baseParams, index: 0 });
+              setNewerEvents(0);
               setGrouped((current) => {
                 localStorage.setItem(
                   "xray-scope:group-repeats",
@@ -758,6 +807,7 @@ export function EventsDashboard({
           Страница{" "}
           <span className="font-mono text-slate-300">{currentPage + 1}</span>
           {` · ${rowsLabel(visibleRowCount)}`}
+          {fillingPage ? " · догружаем события…" : ""}
           {grouped && events.length
             ? ` после группировки ${events.length} исходных событий`
             : ""}
@@ -768,7 +818,7 @@ export function EventsDashboard({
               variant="ghost"
               size="sm"
               onClick={() => {
-                setPagination({ key: baseParams, index: 0, cursors: [null] });
+                setPagination({ key: baseParams, index: 0 });
                 setNewerEvents(0);
               }}
               className="text-cyan-300"
@@ -779,13 +829,12 @@ export function EventsDashboard({
           <Button
             variant="secondary"
             size="sm"
-            disabled={currentPage === 0 || eventsQuery.isFetching}
+            disabled={currentPage === 0}
             onClick={() => {
               if (currentPage === 1) setNewerEvents(0);
               setPagination({
                 key: baseParams,
                 index: Math.max(0, currentPage - 1),
-                cursors,
               });
             }}
           >
@@ -795,15 +844,14 @@ export function EventsDashboard({
           <Button
             variant="secondary"
             size="sm"
-            disabled={!eventsQuery.data?.nextCursor || eventsQuery.isFetching}
+            disabled={
+              fillingPage || !hasNextRowPage || eventsQuery.isFetchingNextPage
+            }
             onClick={() => {
-              const cursor = eventsQuery.data?.nextCursor;
-              if (!cursor) return;
               if (currentPage === 0) setNewerEvents(0);
               setPagination({
                 key: baseParams,
                 index: currentPage + 1,
-                cursors: [...cursors.slice(0, currentPage + 1), cursor],
               });
             }}
           >
