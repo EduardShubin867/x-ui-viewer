@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildActivityBuckets, chooseActivityBucketMs } from "./activity";
+import {
+  buildActivityBuckets,
+  buildActivityBucketsFromCounts,
+  chooseActivityBucketMs,
+} from "./activity";
 
 describe("activity buckets", () => {
   it("keeps short ranges minute-based and limits long ranges", () => {
@@ -24,5 +28,17 @@ describe("activity buckets", () => {
       from: "2026-07-16T00:01:00.000Z",
       to: "2026-07-16T00:02:00.000Z",
     });
+  });
+
+  it("builds the same zero-filled timeline from database aggregates", () => {
+    const result = buildActivityBucketsFromCounts(
+      new Map([
+        [0, 4],
+        [2, 7],
+      ]),
+      new Date("2026-07-16T00:00:00.000Z"),
+      new Date("2026-07-16T00:03:00.000Z"),
+    );
+    expect(result.items.map((item) => item.value)).toEqual([4, 0, 7]);
   });
 });

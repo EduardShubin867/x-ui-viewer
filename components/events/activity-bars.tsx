@@ -18,7 +18,13 @@ function tooltipLabel(point: ActivityBucket): string {
     : `${formatDate(from)}, ${formatTime(from)} – ${formatDate(to)}, ${formatTime(to)}`;
 }
 
-export function ActivityBars({ items }: { items: readonly ActivityBucket[] }) {
+export function ActivityBars({
+  items,
+  className,
+}: {
+  items: readonly ActivityBucket[];
+  className?: string;
+}) {
   const max = Math.max(...items.map((item) => item.value), 1);
   if (!items.length)
     return (
@@ -30,7 +36,7 @@ export function ActivityBars({ items }: { items: readonly ActivityBucket[] }) {
     <div
       role="group"
       aria-label="Активность подключений по времени"
-      className="mt-2 flex h-7 items-end gap-px"
+      className={cn("mt-2 flex h-7 items-end gap-px", className)}
     >
       {items.map((item, index) => {
         const label = tooltipLabel(item);

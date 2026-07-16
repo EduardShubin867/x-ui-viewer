@@ -30,6 +30,7 @@ interface TimeRangePickerProps {
   value: TimeRangeValue;
   onValueChange(value: TimeRangeValue): void;
   disabled?: boolean;
+  allowAll?: boolean;
 }
 
 const presets = Object.entries(PERIOD_LABELS);
@@ -38,6 +39,7 @@ export function TimeRangePicker({
   value,
   onValueChange,
   disabled,
+  allowAll = true,
 }: TimeRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [draftFrom, setDraftFrom] = useState("");
@@ -189,17 +191,23 @@ export function TimeRangePicker({
             </p>
           )}
           <div className="mt-4 flex items-center justify-between gap-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                onValueChange({ period: "", from: "", to: "" });
-                setOpen(false);
-              }}
-            >
-              <RotateCcw className="size-3.5" />
-              Весь период
-            </Button>
+            {allowAll ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onValueChange({ period: "", from: "", to: "" });
+                  setOpen(false);
+                }}
+              >
+                <RotateCcw className="size-3.5" />
+                Весь период
+              </Button>
+            ) : (
+              <span className="text-[10px] text-slate-600">
+                Максимум 31 день
+              </span>
+            )}
             <Button size="sm" onClick={applyExact}>
               <Check className="size-3.5" />
               Применить

@@ -56,3 +56,29 @@ export function buildActivityBuckets(
     }),
   };
 }
+
+export function buildActivityBucketsFromCounts(
+  counts: ReadonlyMap<number, number>,
+  from: Date,
+  to: Date,
+): { bucketMs: number; items: ActivityBucket[] } {
+  const durationMs = Math.max(0, to.getTime() - from.getTime());
+  if (!durationMs) return { bucketMs: 60_000, items: [] };
+  const bucketMs = chooseActivityBucketMs(durationMs);
+  const count = Math.ceil(durationMs / bucketMs);
+  const values = Array.from(
+    { length: count },
+    (_, index) => counts.get(index) ?? 0,
+  );
+  return {
+    bucketMs,
+    items: values.map((value, index) => {
+      const start = from.getTime() + index * bucketMs;
+      return {
+        from: new Date(start).toISOString(),
+        to: new Date(Math.min(start + bucketMs, to.getTime())).toISOString(),
+        value,
+      };
+    }),
+  };
+}

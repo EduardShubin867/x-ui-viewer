@@ -2,6 +2,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   EyeOff,
   Layers2,
@@ -15,7 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EventsPage, XrayAccessEvent } from "@/lib/domain/access-event";
-import type { ActivityBucket } from "@/lib/domain/activity";
+import type { EventStats } from "@/lib/domain/event-stats";
 import type { TrafficView } from "@/lib/domain/traffic";
 import { formatBitrate } from "@/lib/domain/traffic-format";
 import { PERIOD_LABELS } from "@/lib/domain/time-range";
@@ -41,16 +43,7 @@ interface ClientItem {
   nodeName: string;
   inboundTag: string | null;
 }
-interface Stats {
-  total: number;
-  topDomains: { label: string; value: number }[];
-  topClients: { label: string; value: number }[];
-  topOutbounds: { label: string; value: number }[];
-  activity: ActivityBucket[];
-  range: { from: string; to: string; bucketMs: number };
-  unknownDomain: number;
-  uniqueDestinations: number;
-}
+const PAGE_SIZE = 100;
 const json = async <T,>(url: string): Promise<T> => {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -111,9 +104,14 @@ export function EventsDashboard({
   const [includeLoopback, setIncludeLoopback] = useState(false);
   const [live, setLive] = useState(true);
   const [connected, setConnected] = useState(false);
-  const [rowLimit, setRowLimit] = useState("250");
   const [grouped, setGrouped] = useState(true);
   const [pending, setPending] = useState<XrayAccessEvent[]>([]);
+  const [newerEvents, setNewerEvents] = useState(0);
+  const [pagination, setPagination] = useState<{
+    key: string;
+    index: number;
+    cursors: Array<string | null>;
+  }>({ key: "", index: 0, cursors: [null] });
   const filterRef = useRef(filters);
   const clientEmailsRef = useRef(clientEmails);
   const includeLoopbackRef = useRef(includeLoopback);
@@ -157,18 +155,33 @@ export function EventsDashboard({
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  const params = useMemo(() => {
-    const search = new URLSearchParams({ limit: rowLimit });
+  const baseParams = useMemo(() => {
+    const search = new URLSearchParams({ limit: String(PAGE_SIZE) });
     for (const [key, value] of Object.entries(filters))
       if (value && key !== "period") search.set(key, value);
     for (const email of clientEmails) search.append("clientEmail", email);
     if (includeLoopback) search.set("includeLoopback", "true");
     return search.toString();
-  }, [clientEmails, filters, includeLoopback, rowLimit]);
+  }, [clientEmails, filters, includeLoopback]);
+  const currentPage = pagination.key === baseParams ? pagination.index : 0;
+  const cursors = useMemo(
+    () => (pagination.key === baseParams ? pagination.cursors : [null]),
+    [baseParams, pagination],
+  );
+  const params = useMemo(() => {
+    const search = new URLSearchParams(baseParams);
+    const cursor = cursors[currentPage];
+    if (cursor) search.set("cursor", cursor);
+    return search.toString();
+  }, [baseParams, currentPage, cursors]);
   const paramsRef = useRef(params);
+  const currentPageRef = useRef(currentPage);
   useEffect(() => {
     paramsRef.current = params;
   }, [params]);
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
   const eventsQuery = useQuery({
     queryKey: ["events", params],
     queryFn: () => json<EventsPage>(`/api/events?${params}`),
@@ -203,7 +216,7 @@ export function EventsDashboard({
   const historical = Boolean(filters.to);
   const statsQuery = useQuery({
     queryKey: ["stats", statsParams.toString()],
-    queryFn: () => json<Stats>(`/api/stats?${statsParams}`),
+    queryFn: () => json<EventStats>(`/api/stats?${statsParams}`),
     enabled: !fixed,
     refetchInterval: live && !historical ? 15_000 : false,
   });
@@ -231,6 +244,10 @@ export function EventsDashboard({
         setPending((current) => [...current.slice(-499), event]);
         return;
       }
+      if (currentPageRef.current > 0) {
+        setNewerEvents((current) => current + 1);
+        return;
+      }
       queryClient.setQueryData<EventsPage>(
         ["events", paramsRef.current],
         (current) =>
@@ -246,7 +263,7 @@ export function EventsDashboard({
                   ...current.items.filter(
                     (item) => item.eventId !== event.eventId,
                   ),
-                ].slice(0, Number(rowLimit)),
+                ].slice(0, PAGE_SIZE),
               }
             : current,
       );
@@ -257,7 +274,7 @@ export function EventsDashboard({
     );
     source.onerror = () => setConnected(false);
     return () => source.close();
-  }, [queryClient, rowLimit]);
+  }, [queryClient]);
 
   const update = (key: string) => (value: string) => {
     if (key === "nodeId") {
@@ -388,20 +405,10 @@ export function EventsDashboard({
               Подключения в реальном времени
             </h1>
           </div>
-          <div className="flex w-full flex-wrap items-center gap-3 text-xs text-slate-500 sm:w-auto">
-            <span>{events.length} строк в браузере</span>
-            <span className="h-4 w-px bg-slate-800" />
-            <span>лимит</span>
-            <Select
-              value={rowLimit}
-              onValueChange={setRowLimit}
-              placeholder="250"
-              options={["100", "250", "500"].map((value) => ({
-                value,
-                label: value,
-              }))}
-              className="min-w-20"
-            />
+          <div className="flex w-full flex-wrap items-center gap-2 text-xs text-slate-500 sm:w-auto">
+            <span>Страница {currentPage + 1}</span>
+            <span className="text-slate-700">·</span>
+            <span>до {PAGE_SIZE} исходных событий</span>
           </div>
         </div>
       )}
@@ -724,6 +731,63 @@ export function EventsDashboard({
         </div>
       </div>
       <EventTable events={events} grouped={grouped} traffic={trafficMap} />
+      <div className="flex flex-col items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-900/35 px-3 py-2.5 sm:flex-row">
+        <p className="text-xs text-slate-500">
+          Страница{" "}
+          <span className="font-mono text-slate-300">{currentPage + 1}</span>
+          {events.length ? ` · ${events.length} событий` : " · событий нет"}
+          {grouped ? " · повторы группируются внутри страницы" : ""}
+        </p>
+        <div className="flex items-center gap-2">
+          {currentPage > 0 && newerEvents > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setPagination({ key: baseParams, index: 0, cursors: [null] });
+                setNewerEvents(0);
+              }}
+              className="text-cyan-300"
+            >
+              +{newerEvents} новых · к началу
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={currentPage === 0 || eventsQuery.isFetching}
+            onClick={() => {
+              if (currentPage === 1) setNewerEvents(0);
+              setPagination({
+                key: baseParams,
+                index: Math.max(0, currentPage - 1),
+                cursors,
+              });
+            }}
+          >
+            <ChevronLeft className="size-3.5" />
+            Назад
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!eventsQuery.data?.nextCursor || eventsQuery.isFetching}
+            onClick={() => {
+              const cursor = eventsQuery.data?.nextCursor;
+              if (!cursor) return;
+              if (currentPage === 0) setNewerEvents(0);
+              setPagination({
+                key: baseParams,
+                index: currentPage + 1,
+                cursors: [...cursors.slice(0, currentPage + 1), cursor],
+              });
+            }}
+          >
+            Далее
+            <ChevronRight className="size-3.5" />
+          </Button>
+        </div>
+      </div>
     </section>
   );
 }
